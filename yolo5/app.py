@@ -6,11 +6,19 @@ import uuid
 import yaml
 from loguru import logger
 import os
+import boto3
+from pymongo import MongoClient
 
 images_bucket = os.environ['BUCKET_NAME']
+MONGODB_URI = os.environ.get('MONGODB_URI', 'mongodb://mongo1:27017,mongo2:27018,mongo3:27019/?replicaSet=myReplicaSet')
+aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
+aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
+
 
 with open("data/coco128.yaml", "r") as stream:
     names = yaml.safe_load(stream)['names']
+
+s3 = boto3.client('s3')
 
 app = Flask(__name__)
 
@@ -23,12 +31,18 @@ def predict():
 
     # Receives a URL parameter representing the image to download from S3
     img_name = request.args.get('imgName')
+    original_img_path = img_name
 
     # TODO download img_name from S3, store the local image path in original_img_path
     #  The bucket name should be provided as an env var BUCKET_NAME.
-    original_img_path = ...
+    # s3 = boto3.client('s3', aws_access_key_id=aws_access_key_id, aws_secret_access_key, aws_region)
+    try:
+        s3.download_file(images_bucket, img_name, original_img_path)
+        logger.info(f'prediction: {prediction_id}/{original_img_path}. Download img completed')
+        logger.info(f'Image downloaded successfully')
+    except Exception as e:
+        logger.info(f'Error downloading image')
 
-    logger.info(f'prediction: {prediction_id}/{original_img_path}. Download img completed')
 
     # Predicts the objects in the image
     run(
@@ -47,6 +61,7 @@ def predict():
     predicted_img_path = Path(f'static/data/{prediction_id}/{original_img_path}')
 
     # TODO Uploads the predicted image (predicted_img_path) to S3 (be careful not to override the original image).
+    s3.upload_file(predicted_img_path, images_bucket, f'predicted/{img_name}')
 
     # Parse prediction labels and create a summary
     pred_summary_path = Path(f'static/data/{prediction_id}/labels/{original_img_path.split(".")[0]}.txt')
@@ -73,8 +88,20 @@ def predict():
         }
 
         # TODO store the prediction_summary in MongoDB
+        def store_prediction_summary(prediction_summary):
+            try:
+                client=MongoClient(MONGODB_URI)
+                db=client['objectdetection']
+                collection=db['predictions']
+                collection.insert_one(prediction_summary)
+                logger.info(f'prediction: {prediction_summary["prediction_id"]}/{prediction_summary["original_img_path"]}. Stored in mongodb successfully')
+            except Exception as e:
+                logger.info(f'Failed to store prediction_summary in Mongodb. {e}')
+                return 'Failed to store prediction_summary in MongoDb', 500
 
-        return prediction_summary
+        store_prediction_summary(prediction_summary)
+
+
     else:
         return f'prediction: {prediction_id}/{original_img_path}. prediction result not found', 404
 
