@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from detect import run
 import uuid
 import yaml
@@ -10,21 +10,37 @@ import boto3
 from pymongo import MongoClient
 
 images_bucket = os.environ['BUCKET_NAME']
-MONGODB_URI = os.environ.get('MONGODB_URI', 'mongodb://mongo1:27017,mongo2:27018,mongo3:27019/?replicaSet=myReplicaSet')
 aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
+s3 = boto3.client('s3')
+
+MONGODB_URI = "mongodb://mongo1:27017,mongo2:27018,mongo3:27019/?replicaSet=myReplicaSet"
+client = MongoClient(MONGODB_URI)
+db = client['objectdetection']
+collection = db['predictions']
+
+
+def save_to_db(data):
+    try:
+        logger.info(f"saving to db...................")
+        collection.insert_one(data)
+        logger.info(f"saved!")
+        return True
+    except Exception as e:
+        logger.info(f"Error saving to db!... {e}")
+        return False
 
 
 with open("data/coco128.yaml", "r") as stream:
     names = yaml.safe_load(stream)['names']
 
-s3 = boto3.client('s3')
-
 app = Flask(__name__)
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    # Generates a UUID for this current prediction HTTP request. This id can be used as a reference in logs to identify and track individual prediction requests.
+    # Generates a UUID for this current prediction HTTP request. This id can be used as a reference in logs to
+    # identify and track individual prediction requests.
     prediction_id = str(uuid.uuid4())
 
     logger.info(f'prediction: {prediction_id}. start processing')
@@ -39,10 +55,9 @@ def predict():
     try:
         s3.download_file(images_bucket, img_name, original_img_path)
         logger.info(f'prediction: {prediction_id}/{original_img_path}. Download img completed')
-        logger.info(f'Image downloaded successfully')
+        logger.info(f'Image downloaded successfully...............')
     except Exception as e:
         logger.info(f'Error downloading image')
-
 
     # Predicts the objects in the image
     run(
@@ -56,12 +71,13 @@ def predict():
 
     logger.info(f'prediction: {prediction_id}/{original_img_path}. done')
 
-    # This is the path for the predicted image with labels
-    # The predicted image typically includes bounding boxes drawn around the detected objects, along with class labels and possibly confidence scores.
+    # This is the path for the predicted image with labels The predicted image typically includes bounding boxes
+    # drawn around the detected objects, along with class labels and possibly confidence scores.
     predicted_img_path = Path(f'static/data/{prediction_id}/{original_img_path}')
 
     # TODO Uploads the predicted image (predicted_img_path) to S3 (be careful not to override the original image).
     s3.upload_file(predicted_img_path, images_bucket, f'predicted/{img_name}')
+    logger.info(f"uploaded....................")
 
     # Parse prediction labels and create a summary
     pred_summary_path = Path(f'static/data/{prediction_id}/labels/{original_img_path.split(".")[0]}.txt')
@@ -82,25 +98,16 @@ def predict():
         prediction_summary = {
             'prediction_id': prediction_id,
             'original_img_path': original_img_path,
-            'predicted_img_path': predicted_img_path,
+            'predicted_img_path': str(predicted_img_path),
             'labels': labels,
             'time': time.time()
         }
-
+        logger.info(f"type")
+        logger.info(type(prediction_summary))
         # TODO store the prediction_summary in MongoDB
-        def store_prediction_summary(prediction_summary):
-            try:
-                client=MongoClient(MONGODB_URI)
-                db=client['objectdetection']
-                collection=db['predictions']
-                collection.insert_one(prediction_summary)
-                logger.info(f'prediction: {prediction_summary["prediction_id"]}/{prediction_summary["original_img_path"]}. Stored in mongodb successfully')
-            except Exception as e:
-                logger.info(f'Failed to store prediction_summary in Mongodb. {e}')
-                return 'Failed to store prediction_summary in MongoDb', 500
-
-        store_prediction_summary(prediction_summary)
-
+        save_to_db(prediction_summary)
+        prediction_summary["_id"] = str(prediction_summary["_id"])
+        return jsonify(prediction_summary)
 
     else:
         return f'prediction: {prediction_id}/{original_img_path}. prediction result not found', 404
