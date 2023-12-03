@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  mongo1:
+    image: mongo:4.4
+    ports:
+      - "27017:27017"
+    command: mongod --replSet myReplicaSet --bind_ip localhost,mongo1
+    container_name: mongo1
+    networks:
+      - mongoCluster
+
+  mongo2:
+    image: mongo:4.4
+    ports:
+      - "27018:27017"
+    command: mongod --replSet myReplicaSet --bind_ip localhost,mongo2
+    container_name: mongo2
+    networks:
+      - mongoCluster
+
+
+  mongo3:
+    image: mongo:4.4
+    ports:
+      - "27019:27017"
+    command: mongod --replSet myReplicaSet --bind_ip localhost,mongo3
+    container_name: mongo3
+    networks:
+      - mongoCluster
+
+  yolo5:
+    image: shirinlabay/yolo5:1.1
+    ports:
+      - "8081:8081"
+    environment:
+      BUCKET_NAME: shirinlabay-bucket
+    env_file:
+      - .env
+    volumes:
+      - ~/.aws:/root/.aws
+    networks:
+      - mongoCluster
+
+  polybot:
+    image: shirinlabay/poly2:1.1
+    ports:
+      - "8443:8443"
+    environment:
+      TELEGRAM_APP_URL: presently-loved-polliwog.ngrok-free.app
+      BUCKET_NAME: shirinlabay-bucket
+    env_file:
+      - .env
+    volumes:
+      - ~/.aws:/root/.aws
+    networks:
+      - mongoCluster
+
+networks:
+  mongoCluster:
+    driver: bridge
+
