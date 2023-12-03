@@ -5,6 +5,8 @@ from loguru import logger
 import os
 import time
 from telebot.types import InputFile
+from deep_translator import GoogleTranslator
+import pandas as pd
 
 
 class Bot:
@@ -61,6 +63,7 @@ class Bot:
             InputFile(img_path)
         )
 
+
     def handle_message(self, msg):
         """Bot Main message handler"""
         logger.info(f'Incoming message: {msg}')
@@ -83,8 +86,15 @@ class ObjectDetectionBot(Bot):
     def handle_message(self, msg):
         bucket_name = os.environ['BUCKET_NAME']
         logger.info(f'Incoming message: {msg}')
+        df = pd.read_csv('emoji_df.csv')
+        emoji_mapping = dict(zip(df['name'], df['emoji']))
 
         try:
+            if "start" in msg.get("text", "").lower():
+                self.send_text(msg['chat']['id'], "Start the prediction by sending an image")
+                return
+
+
             if self.is_current_msg_photo(msg):
                 s3=boto3.client('s3')
                 logger.info(f'photo')
@@ -97,6 +107,7 @@ class ObjectDetectionBot(Bot):
                 # TODO send a request to the `yolo5` service for prediction
                 response = requests.post(f"http://docker-p:8081/predict?imgName={obj_name}")
                 predictions = response.json()['labels']
+                emojis={}
                 detected_objects = {}
                 for predict in predictions:
                     object_name = predict['class']
@@ -104,11 +115,30 @@ class ObjectDetectionBot(Bot):
                         detected_objects[object_name] += 1
                     else:
                         detected_objects[object_name] = 1
+                    label=object_name
+                    logger.info(object_name)
+                    matching_names = df[df['name'].str.contains(fr'\b{label}\b', case=False)]['name'].tolist()
+
+                    if matching_names:
+                        # If there are matching names, use the first one
+                        matching_name = matching_names[0]
+                        emoji_for_word = emoji_mapping.get(matching_name, '❓')
+                    else:
+                        # If there are no matching names, handle the case
+                        emoji_for_word = '❓'
+                    emojis[object_name]=emoji_for_word
                 text = 'Detected objects:\n' + '\n'.join(f'{key}: {value}' for key, value in detected_objects.items())
+                text2 = 'The emoji for: ' + '\n'.join(f'{key}: {value}' for key, value in emojis.items())
+
                 self.send_text(msg['chat']['id'], {text})
+                self.send_text(msg['chat']['id'], {text2})
+                translated_text = GoogleTranslator(source='auto', target='hebrew').translate(text)
+                logger.info(f'translated: {translated_text}')
+                self.send_text(msg['chat']['id'], {translated_text})
 
             elif "text" in msg:
                 self.send_text(msg['chat']['id'], f'your message: {msg["text"]}')
+                self.send_text(msg['chat']['id'], "Start the prediction by sending an image")
 
             else:
                 self.send_text(msg['chat']['id'])
@@ -116,4 +146,3 @@ class ObjectDetectionBot(Bot):
             logger.error(f'Error processing message: {e}')
             error_message = "An error occurred while processing your request. Please try again later."
             self.send_text(msg['chat']['id'], error_message)
-
