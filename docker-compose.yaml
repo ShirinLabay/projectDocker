@@ -33,6 +33,7 @@ services:
     image: shirinlabay/yolo5:1.1
     ports:
       - "8081:8081"
+    container_name: docker-p
     environment:
       BUCKET_NAME: shirinlabay-bucket
     env_file:
